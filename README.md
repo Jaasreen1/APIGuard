@@ -146,7 +146,18 @@ function walk(o,p,out,dp){dp=dp||0;if(dp<20&&o&&typeof o==="object"){Object.keys
 function trunc(s){s=String(s);return s.length>100?s.slice(0,97)+"…":s;}
 function mask(v){v=String(v);return v.length<=6?"••••":v.slice(0,3)+"••••("+v.length+" car.)";}
 function maskEmail(e){return e.charAt(0)+"***"+e.slice(e.indexOf("@"));}
-function maskUrl(u){return u.replace(/([?&][^=&]*=)([^&]*)/g,function(m,a,b){return a+mask(b)});}
+function maskUrl(u){return redactEvidence(u.replace(/([?&][^=&]*=)([^&]*)/g,function(m,a,b){return a+mask(b)}));}
+// Sanitize all evidence before it reaches the report or any export.
+function redactEvidence(value){
+ var t=String(value);
+ t=t.replace(/(Bearer\s+)[A-Za-z0-9._~+\/-]+/gi,"$1[REDACTED]");
+ t=t.replace(/(\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|pwd|secret|authorization|client[_-]?secret)\b\s*[:=]\s*["']?)([^"'\s,;&}]+)/gi,"$1[REDACTED]");
+ t=t.replace(/\b(?:AKIA[0-9A-Z]{16}|sk_live_[0-9A-Za-z]{8,}|ghp_[0-9A-Za-z]{20,}|xox[bp]-[0-9A-Za-z-]{10,})\b/g,"[REDACTED]");
+ t=t.replace(/\beyJ[\w-]+\.eyJ[\w-]+\.[\w-]*\b/g,"[REDACTED JWT]");
+ t=t.replace(/[\w.+-]{1,64}@[\w-]{1,63}\.[\w.]{2,32}/g,maskEmail);
+ return t;
+}
+
 var PH=/^(no[-_ ]?configurad[oa]|not[-_ ]?set|change[-_ ]?me|example|ejemplo|test|prueba|none|null|undefined|n\/a|tbd|todo|redacted|x{3,}|your[-_ ].*|<.*>|\*+|•+|\{\{.*\}\}|\$\{.*\})$/i;
 function fake(v){v=String(v).trim();return PH.test(v)||/^[a-z]+([-_ ][a-z]+)+$/i.test(v);}
 var SECP=[/AKIA[0-9A-Z]{16}/,/sk_live_[0-9A-Za-z]{8,}/,/-----BEGIN [A-Z ]*PRIVATE KEY-----/,/ghp_[0-9A-Za-z]{20,}/,/xox[bp]-[0-9A-Za-z-]{10,}/];
@@ -157,7 +168,7 @@ var H=parseHeaders(d.headers),h=H.h,hasH=Object.keys(h).length>0,b=d.body.trim()
 try{json=JSON.parse(b);}catch(e){}
 var items=json!==null?walk(json,"",[]):[],path=url.split("?")[0],q=url.indexOf("?")>-1?url.slice(url.indexOf("?")):"";
 var authEp=/\/(login|signin|auth|oauth|token|session)/i.test(path),ok2=d.status>=200&&d.status<300;
-function add(id,sev,est,conf,ev,why){f.push({id:id,sev:sev,est:est,conf:conf,ev:ev||"—",why:why||"",r:RULES[id]});}
+function add(id,sev,est,conf,ev,why){f.push({id:id,sev:sev,est:est,conf:conf,ev:redactEvidence(ev||"—"),why:redactEvidence(why||""),r:RULES[id]});}
 function obs(id,conf,ev){add(id,"Info","Informativo",conf||"Baja",ev,"Observación: no se presenta como problema.");}
 if(trunc0)obs("SIZE","Alta","Límite: "+MAX+" caracteres por campo");
 if(/^http:\/\//i.test(url)&&!/^http:\/\/(localhost|127\.|\[::1\])/i.test(url))add("HTTP_PLANO","Alto","Confirmado","Alta",path,"El esquema http:// se observa directamente; el impacto es alto porque expone todo el tráfico.");
@@ -201,7 +212,7 @@ return f;}
 function verdict(h){var c=h.filter(function(x){return x.estado==="Confirmado"&&(x.gravedad==="Crítico"||x.gravedad==="Alto")}).length,s=h.filter(function(x){return x.gravedad==="Crítico"||x.gravedad==="Alto"}).length;return c?"Hay problemas confirmados de gravedad alta: corrígelos primero.":s?"No hay problemas altos confirmados, pero sí sospechas de gravedad alta que conviene verificar.":h.length?"Solo hallazgos de gravedad media o baja: planifica su corrección.":"No se encontraron hallazgos con estas comprobaciones. Esto no garantiza que la API sea segura.";}
 var LIM=["Análisis estático de datos pegados manualmente: no hace peticiones ni verifica el comportamiento real del servidor.","«Sospechoso» significa que hay indicios por comprobar; no es una vulnerabilidad demostrada.","Los valores secretos aparecen enmascarados en el informe y en las exportaciones.","Cada campo se limita a "+MAX+" caracteres."];
 function build(d,f){var u=maskUrl(d.url.trim().slice(0,MAX))||"<URL>",pu=u.split("?")[0];
-function ob(x,i){var r=x.r;return{prioridad:i+1,id:x.id,nombre:r.n,gravedad:x.sev,confianza:x.conf,estado:x.est,fragmento:x.ev,demuestra:r.p,no_demuestra:r.np,impacto:r.i,justificacion_gravedad:x.why,contexto_que_cambiaria_la_evaluacion:r.c,como_comprobarlo:r.r.replace("{u}",pu),correccion:r.f,comprobacion_posterior:r.v};}
+function ob(x,i){var r=x.r;return{prioridad:i+1,id:x.id,nombre:r.n,gravedad:x.sev,confianza:x.conf,estado:x.est,fragmento:redactEvidence(x.ev),demuestra:r.p,no_demuestra:r.np,impacto:r.i,justificacion_gravedad:x.why,contexto_que_cambiaria_la_evaluacion:r.c,como_comprobarlo:r.r.replace("{u}",pu),correccion:r.f,comprobacion_posterior:r.v};}
 var hall=f.filter(function(x){return x.est!=="Informativo"}).map(ob),obsv=f.filter(function(x){return x.est==="Informativo"}).map(ob),sv={};
 ORDER.slice(0,4).forEach(function(s){sv[s]=hall.filter(function(x){return x.gravedad===s}).length});
 return{herramienta:"Analizador de seguridad de API",origen:"Datos pegados manualmente; no verificados en vivo",endpoint:{metodo:d.method,url:u,estado_http:d.status,credenciales:AUTHL[d.auth]},
